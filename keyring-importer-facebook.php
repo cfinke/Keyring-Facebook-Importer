@@ -73,8 +73,7 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 
 	function extract_posts_from_data( $raw ) {
 		global $wpdb;
-print_r($raw);
-die;
+
 		$importdata = $raw;
 
 		if ( null === $importdata ) {
@@ -270,4 +269,9 @@ add_action( 'init', function() {
 		plugin_basename( __FILE__ ),
 		__( 'Download all of your Facebook statuses as individual Posts (with a "status" post format).', 'keyring' )
 	);
+} );
+
+add_filter( 'keyring_facebook_scope', function ( $scopes ) {
+	$scopes[] = 'read_stream';
+	return $scopes;
 } );
