@@ -476,6 +476,8 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 	}
 
 	private function sideload_photo_to_album( $photo, $album_id ) {
+		global $wpdb;
+		
 		$photo_id = $wpdb->get_var( $wpdb->prepare( "SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = 'facebook_id' AND meta_value = %s", $photo['facebook_id'] ) );
 
 		if ( ! $photo_id ) {
