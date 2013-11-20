@@ -13,6 +13,22 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 
 	var $auto_import = false;
 
+	var $api_endpoints = array(
+		'me/albums',
+		'me/photos',
+		'me/posts',
+	);
+
+	var $current_endpoint = null;
+
+	function __construct() {
+		$rv = parent::__construct();
+
+		$this->current_endpoint = $this->api_endpoints[ min( count( $this->api_endpoints ) - 1, $this->get_option( 'endpoint_index', 0 ) ) ];
+
+		return $rv;
+	}
+
 	function handle_request_options() {
 		// Validate options and store them so they can be used in auto-imports
 		if ( empty( $_POST['category'] ) || !ctype_digit( $_POST['category'] ) )
@@ -43,7 +59,7 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 
 	function build_request_url() {
 		// Base request URL
-		$url = "https://graph.facebook.com/me/posts";
+		$url = "https://graph.facebook.com/" . $this->current_endpoint;
 
 		if ( $this->auto_import ) {
 			// Get most recent checkin we've imported (if any), and its date so that we can get new ones since then
@@ -51,6 +67,8 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 				'numberposts' => 1,
 				'orderby'     => 'date',
 				'order'       => 'DESC',
+				'meta_key'    => 'endpoint',
+				'meta_value'  => $this->current_endpoint,
 				'tax_query'   => array( array(
 					'taxonomy' => 'keyring_services',
 					'field'    => 'slug',
@@ -65,7 +83,7 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 			}
 		} else {
 			// Handle page offsets (only for non-auto-import requests)
-	//		$url = $this->get_option( 'paging', $url );
+			$url = $this->get_option( 'paging:' . $this->current_endpoint, $url );
 		}
 
 		return $url;
@@ -81,18 +99,41 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 			return new Keyring_Error( 'keyring-facebook-importer-failed-download', __( 'Failed to download your statuses from Facebook. Please wait a few minutes and try again.' ) );
 		}
 
-		// Make sure we have some checkins to parse
+		// Make sure we have some statuses to parse
 		if ( !is_object( $importdata ) || !count( $importdata->data ) ) {
-			$this->finished = true;
-			$this->set_option( 'paging', null );
+			if ( $this->get_option( 'endpoint_index' ) == ( count( $this->api_endpoints ) - 1 ) )
+				$this->finished = true;
+
+			$this->set_option( 'paging:' . $this->current_endpoint, null );
+			$this->rotate_endpoint();
 			return;
 		}
 
-		if ( isset( $importdata->paging ) && isset( $importdata->paging->next ) )
-			$this->set_option( 'paging', $importdata->paging->next );
-		else
-			$this->set_option( 'paging', null );
+		switch ( $this->current_endpoint ) {
+			case 'me/posts':
+				$this->extract_posts_from_data_posts( $importdata );
+			break;
+			case 'me/albums':
+				$this->extract_posts_from_data_albums( $importdata );
+			break;
+			case 'me/photos':
+				$this->extract_posts_from_data_photos( $importdata );
+			break;
+		}
 
+		if ( isset( $importdata->paging ) && isset( $importdata->paging->next ) ) {
+			$this->set_option( 'paging:' . $this->current_endpoint, $importdata->paging->next );
+		}
+		else {
+			if ( $this->get_option( 'endpoint_index' ) == ( count( $this->api_endpoints ) - 1 ) )
+				$this->finished = true;
+
+			$this->set_option( 'paging:' . $this->current_endpoint, null );
+			$this->rotate_endpoint();
+		}
+	}
+
+	private function extract_posts_from_data_posts( $importdata ) {
 		// Parse/convert everything to WP post structs
 		foreach ( $importdata->data as $post ) {
 			$post_title = '';
@@ -146,8 +187,6 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 				}
 			}
 
-			// @todo Multi-photo posts don't appear to include all photos.
-
 			// @todo Import Likes?
 			// $post->likes->data[]->name
 
@@ -180,6 +219,103 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 				'photos',
 				'videos'
 			);
+		}
+	}
+
+	private function extract_posts_from_data_albums( $importdata ) {
+		global $wpdb;
+
+		foreach ( $importdata->data as $album ) {
+			$facebook_id = $album->id;
+
+			$post_id = $wpdb->get_var( $wpdb->prepare( "SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = 'facebook_id' AND meta_value = %s", $facebook_id ) );
+
+			if ( $post_id ) {
+				$original_post = get_post( $post_id );
+
+				// Pull in any photos added since we last updated the album.
+				if ( strtotime( $original_post->post_modified_gmt ) < strtotime( $album->updated_time ) ) {
+					$new_photos = $this->retrieve_album_photos( $album->id, strtotime( $original_post->post_modified_gmt ) );
+
+					foreach ( $new_photos as $photo ) {
+						$this->sideload_photo_to_album( $photo, $post_id );
+					}
+
+					$original_post->post_modified_gmt = gmdate( 'Y-m-d H:i:s', strtotime( $album->updated_time ) );
+					$original_post->post_modified = get_date_from_gmt( $post->post_modified_gmt );
+					wp_update_post( (array) $original_post );
+				}
+			}
+			else {
+				// Create a post for this gallery.
+				$post = array();
+				$post['post_title'] = $album->name;
+				$post['post_content'] = '[gallery type="rectangular"]';
+				$post['post_date_gmt'] = gmdate( 'Y-m-d H:i:s', strtotime( $album->created_time ) );
+				$post['post_date'] = get_date_from_gmt( $post['post_date_gmt'] );
+				$post['post_modified_gmt'] = gmdate( 'Y-m-d H:i:s', strtotime( $album->updated_time ) );
+				$post['post_modified'] = get_date_from_gmt( $post['post_modified_gmt'] );
+				$post['post_type'] = 'post';
+				$post['post_author'] = $this->get_option( 'author' );
+				$post['tags'] = $this->get_option( 'tags' );
+				$post['post_category'] = array( $this->get_option( 'category' ) );
+				$post['post_status'] = 'private';
+
+				$post['facebook_id'] = $album->id;
+				$post['facebook_raw'] = $album;
+
+				$post['album_photos'] = $this->retrieve_album_photos( $album->id );
+
+				$this->posts[] = $post;
+			}
+		}
+	}
+
+	private function extract_posts_from_data_photos( $importdata ) {
+		global $wpdb;
+
+		foreach ( $importdata->data as $photo ) {
+			$facebook_id = $photo->id;
+
+			$photo_src = '';
+
+			$post_ids = $wpdb->get_results( $wpdb->prepare( "SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = 'facebook_id' AND meta_value = %s", $facebook_id ) );
+
+			if ( ! empty( $post_id ) ) {
+				foreach ( $post_ids as $post_id ) {
+					$post = get_post( $post_id );
+
+					if ( $post->post_type == 'post' )
+						continue 2;
+					else if ( $post->post_type == 'attachment' )
+						$photo_src = wp_get_attachment_image_src( $post_id, 'large' );
+				}
+			}
+
+			// Create a post and upload the photo for this photo.
+			$post = array();
+			$post['post_title'] = isset( $photo->name ) ? $photo->name : '';
+			$post['post_date_gmt'] = gmdate( 'Y-m-d H:i:s', strtotime( $photo->created_time ) );
+			$post['post_date'] = get_date_from_gmt( $post['post_date_gmt'] );
+			$post['post_modified_gmt'] = gmdate( 'Y-m-d H:i:s', strtotime( $photo->updated_time ) );
+			$post['post_modified'] = get_date_from_gmt( $post['post_modified_gmt'] );
+			$post['post_type'] = 'post';
+			$post['post_author'] = $this->get_option( 'author' );
+			$post['tags'] = $this->get_option( 'tags' );
+			$post['post_category'] = array( $this->get_option( 'category' ) );
+			$post['post_status'] = 'private';
+
+			$post['facebook_id'] = $photo->id;
+			$post['facebook_raw'] = $photo;
+
+			if ( $photo_src ) {
+				$post['post_content'] = $photo_src;
+			}
+			else {
+				$post['photos'] = array( $photo->source );
+			}
+
+			$this->posts[] = $post;
 		}
 	}
 
@@ -221,6 +357,7 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 				wp_set_post_categories( $post_id, $post_category );
 
 				add_post_meta( $post_id, 'facebook_id', $facebook_id );
+				add_post_meta( $post_id, 'endpoint', $this->current_endpoint );
 
 				if ( count( $tags ) )
 					wp_set_post_terms( $post_id, implode( ',', $tags ) );
@@ -240,6 +377,12 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 					}
 				}
 
+				if ( ! empty( $album_photos ) ) {
+					foreach ( $album_photos as $photo ) {
+						$this->sideload_photo_to_album( $photo, $post_id );
+					}
+				}
+
 				if ( ! empty( $videos ) ) {
 					foreach ( $videos as $video ) {
 						$this->sideload_media( $video, $post_id, $post, 'full' );
@@ -255,6 +398,99 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 
 		// Return, so that the handler can output info (or update DB, or whatever)
 		return array( 'imported' => $imported, 'skipped' => $skipped );
+	}
+
+	private function rotate_endpoint() {
+		$this->set_option( 'endpoint_index', ( ( $this->get_option( 'endpoint_index', 0 ) + 1 ) % count( $this->api_endpoints ) ) );
+		$this->current_endpoint = $this->api_endpoints[ $this->get_option( 'endpoint_index' ) ];
+	}
+
+	private function sideload_album_photo( $file, $post_id, $desc = '' ) {
+		if ( !function_exists( 'media_handle_sideload' ) )
+			require_once ABSPATH . 'wp-admin/includes/media.php';
+		if ( !function_exists( 'download_url' ) )
+			require_once ABSPATH . 'wp-admin/includes/file.php';
+		if ( !function_exists( 'wp_read_image_metadata' ) )
+			require_once ABSPATH . 'wp-admin/includes/image.php';
+
+		/* Taken from media_sideload_image. There's probably a better way that doesn't include so much copy/paste. */
+		// Download file to temp location
+		$tmp = download_url( $file );
+		// Set variables for storage
+		// fix file filename for query strings
+		preg_match( '/[^\?]+\.(jpe?g|jpe|gif|png)\b/i', $file, $matches );
+		$file_array['name'] = basename($matches[0]);
+		$file_array['tmp_name'] = $tmp;
+		// If error storing temporarily, unlink
+		if ( is_wp_error( $tmp ) ) {
+				@unlink($file_array['tmp_name']);
+				$file_array['tmp_name'] = '';
+		}
+		// do the validation and storage stuff
+		$id = media_handle_sideload( $file_array, $post_id, $desc );
+		/* End copy/paste */
+
+		@unlink($file_array['tmp_name']);
+
+		return $id;
+	}
+
+	private function retrieve_album_photos( $album_id, $since = null ) {
+		// Get photos
+		$api_url = "https://graph.facebook.com/" . $album_id . "/photos";
+
+		$photos = array();
+
+		while ( $api_url = $this->_retrieve_album_photos( $api_url, $photos ) );
+
+		return $photos;
+	}
+
+	private function _retrieve_album_photos( $api_url, &$photos ) {
+		$album_data = $this->service->request( $api_url, array( 'method' => $this->request_method, 'timeout' => 10 ) );
+
+		if ( empty( $album_data ) || empty( $album_data->data ) ) {
+			return false;
+		}
+
+		foreach ( $album_data->data as $photo_data ) {
+			$photo = array();
+			$photo['post_title'] = $photo_data->name;
+			$photo['src'] = $photo_data->source;
+
+			$photo['facebook_raw'] = $photo_data;
+			$photo['facebook_id'] = $photo_data->id;
+
+			$photo['post_date_gmt'] = gmdate( 'Y-m-d H:i:s', strtotime( $photo_data->created_time ) );
+			$photo['post_date'] = get_date_from_gmt( $post['post_date_gmt'] );
+			$photo['post_modified_gmt'] = gmdate( 'Y-m-d H:i:s', strtotime( $photo_data->updated_time ) );
+			$photo['post_modified'] = get_date_from_gmt( $post['post_modified_gmt'] );
+
+			$photos[] = $photo;
+		}
+
+		if ( isset( $album_data->paging ) && ! empty( $album_data->paging->next ) )
+			return $album_data->paging->next;
+
+		return false;
+	}
+
+	private function sideload_photo_to_album( $photo, $album_id ) {
+		$photo_id = $wpdb->get_var( $wpdb->prepare( "SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = 'facebook_id' AND meta_value = %s", $photo['facebook_id'] ) );
+
+		if ( ! $photo_id ) {
+			$photo_id = $this->sideload_album_photo( $photo['src'], $album_id, $photo['post_title'] );
+
+			add_post_meta( $photo_id, 'facebook_id', $photo['facebook_id'] );
+			add_post_meta( $photo_id, 'raw_import_data', json_encode( $photo['facebook_raw'] ) );
+		}
+		else {
+			$photo_post = get_post( $photo_id );
+			$photo_post->post_parent = $album_id;
+			wp_update_post( (array) $photo_post );
+		}
+
+		return $photo_id;
 	}
 }
 
@@ -273,5 +509,6 @@ add_action( 'init', function() {
 
 add_filter( 'keyring_facebook_scope', function ( $scopes ) {
 	$scopes[] = 'read_stream';
+	$scopes[] = 'user_photos';
 	return $scopes;
 } );
