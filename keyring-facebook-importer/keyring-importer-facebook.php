@@ -11,8 +11,6 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 	const KEYRING_SERVICE   = 'Keyring_Service_Facebook';    // Full class name of the Keyring_Service this importer requires
 	const REQUESTS_PER_LOAD = 3;     // How many remote requests should be made before reloading the page?
 
-	var $auto_import = false;
-
 	var $api_endpoints = array(
 		'me/albums',
 		'me/photos',
