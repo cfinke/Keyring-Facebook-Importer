@@ -335,6 +335,8 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 				// Looks like a duplicate
 				$skipped++;
 			} else {
+				$post = apply_filters( 'keyring_facebook_importer_post', $post );
+				
 				$post_id = wp_insert_post( $post );
 
 				if ( is_wp_error( $post_id ) )
