@@ -194,10 +194,10 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 			// Other bits
 			$post_author    = $this->get_option( 'author' );
 
-			if ( isset( $post->privacy ) && isset( $post->privacy->value ) && ! empty( $post->privacy->value ) )
+//			if ( isset( $post->privacy ) && isset( $post->privacy->value ) && ! empty( $post->privacy->value ) )
 				$post_status = 'private';
-			else
-				$post_status = 'publish';
+//			else
+//				$post_status = 'publish';
 
 			$facebook_id    = $post->id;
 			$facebook_raw   = $post;
