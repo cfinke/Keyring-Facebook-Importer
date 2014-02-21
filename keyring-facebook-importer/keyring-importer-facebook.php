@@ -12,19 +12,64 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 	const REQUESTS_PER_LOAD = 3;     // How many remote requests should be made before reloading the page?
 
 	var $api_endpoints = array(
-		'me/albums',
-		'me/photos',
-		'me/posts',
+		'/albums',
+		'/photos',
+		'/posts'
 	);
 
 	var $current_endpoint = null;
+	var $endpoint_prefix = null;
 
 	function __construct() {
 		$rv = parent::__construct();
 
-		$this->current_endpoint = $this->api_endpoints[ min( count( $this->api_endpoints ) - 1, $this->get_option( 'endpoint_index', 0 ) ) ];
+		if ($this->get_option( 'facebook_page', 0 ) > 0) {
+			$this->endpoint_prefix = $this->get_option( 'facebook_page');
+		} else {
+			$this->endpoint_prefix = "me";
+		}
 
+		$this->current_endpoint = $this->endpoint_prefix . $this->api_endpoints[ min( count( $this->api_endpoints ) - 1, $this->get_option( 'endpoint_index', 0 ) ) ];
+		
+		add_action( 'keyring_importer_facebook_custom_options', array( $this, 'custom_options' ) );
 		return $rv;
+	}
+
+	function custom_options() {
+		?>
+		<tr valign="top">
+			<th scope="row">
+				<label for="include_rts"><?php _e( 'Post Status', 'keyring' ); ?></label>
+			</th>
+			<td>
+				<?php
+					$prev_post_status = $this->get_option( 'fb_post_status' );
+				?>
+				<select name="fb_post_status" id="fb_post_status">
+					<option value="publish" <?php selected( $prev_post_status == 'publish' ); ?>>Publish</option>
+					<option value="private" <?php selected( $prev_post_status == 'private' ); ?>>Private</option>
+				</select>
+			</td>
+		</tr>
+		<tr valign="top">
+			<th scope="row">
+				<label for="include_rts"><?php _e( 'Import From', 'keyring' ); ?></label>
+			</th>
+			<td>
+				<?php
+					$prev_fb_page = $this->get_option( 'facebook_page' );
+					$fb_pages = $this -> retrieve_pages();
+				?>
+				<select name="facebook_page" id="facebook_page">
+					<option value="0">Personal Profile (default)</option>
+					<?php 
+						foreach ( $fb_pages as $fb_page ) {
+							printf( '<option value="%s"' . selected( $prev_fb_page == $fb_page['id'] ) . '>%s</option>', $fb_page['id'], $fb_page['name'] );
+						}
+					?>
+				</select>
+			</td>
+		</tr><?php
 	}
 
 	function handle_request_options() {
@@ -45,10 +90,12 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 			$this->step = 'options';
 		} else {
 			$this->set_option( array(
-				'category'    => (int) $_POST['category'],
-				'tags'        => explode( ',', $_POST['tags'] ),
-				'author'      => (int) $_POST['author'],
-				'auto_import' => $_POST['auto_import'],
+				'category'      => (int) $_POST['category'],
+				'tags'          => explode( ',', $_POST['tags'] ),
+				'author'        => (int) $_POST['author'],
+				'auto_import'   => $_POST['auto_import'],
+				'facebook_page' => (int) $_POST['facebook_page'],
+				'fb_post_status' => $_POST['fb_post_status']
 			) );
 
 			$this->step = 'import';
@@ -108,13 +155,13 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 		}
 
 		switch ( $this->current_endpoint ) {
-			case 'me/posts':
+			case $this->endpoint_prefix . '/posts':
 				$this->extract_posts_from_data_posts( $importdata );
 			break;
-			case 'me/albums':
+			case $this->endpoint_prefix . 'albums':
 				$this->extract_posts_from_data_albums( $importdata );
 			break;
-			case 'me/photos':
+			case $this->endpoint_prefix . 'photos':
 				$this->extract_posts_from_data_photos( $importdata );
 			break;
 		}
@@ -150,7 +197,6 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 			$post_date = get_date_from_gmt( $post_date_gmt );
 
 			$post_type = 'status';
-
 			if ( isset( $post->type ) ) {
 				if ( 'link' == $post->type ) {
 					if ( ! empty( $post->name ) ) {
@@ -181,7 +227,12 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 
 				if ( isset( $post->picture ) ) {
 					// The API returns the tiniest thumbnail. Unacceptable.
-					$photos[] = preg_replace( '/_s\./', '_n.',  $post->picture );
+					if ($post->type == 'link') {
+						$photos[] = urldecode(preg_replace( '/https\:\/\/fbexternal\-a\.akamaihd\.net\/safe\_image\.php\?d\=([A-Z0-9a-z\-\_]+)\&w\=([0-9]+)\&h\=([0-9]+)\&url\=/', '',  $post->picture ));
+					} else {
+						$photos[] = preg_replace( '/_s\./', '_n.',  $post->picture );
+						
+					}
 				}
 			}
 
@@ -194,10 +245,10 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 			// Other bits
 			$post_author    = $this->get_option( 'author' );
 
-//			if ( isset( $post->privacy ) && isset( $post->privacy->value ) && ! empty( $post->privacy->value ) )
-				$post_status = 'private';
-//			else
-//				$post_status = 'publish';
+			//      if ( isset( $post->privacy ) && isset( $post->privacy->value ) && ! empty( $post->privacy->value ) )
+			$post_status = $this->get_option('fb_post_status');
+			//      else
+			//        $post_status = 'publish';
 
 			$facebook_id    = $post->id;
 			$facebook_raw   = $post;
@@ -257,7 +308,7 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 				$post['post_author'] = $this->get_option( 'author' );
 				$post['tags'] = $this->get_option( 'tags' );
 				$post['post_category'] = array( $this->get_option( 'category' ) );
-				$post['post_status'] = 'private';
+				$post['post_status'] = $post['fb_post_status'];
 
 				$post['facebook_id'] = $album->id;
 				$post['facebook_raw'] = $album;
@@ -301,7 +352,7 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 			$post['post_author'] = $this->get_option( 'author' );
 			$post['tags'] = $this->get_option( 'tags' );
 			$post['post_category'] = array( $this->get_option( 'category' ) );
-			$post['post_status'] = 'private';
+			$post['post_status'] = $post['fb_post_status'];
 
 			$post['facebook_id'] = $photo->id;
 			$post['facebook_raw'] = $photo;
@@ -336,7 +387,6 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 				$skipped++;
 			} else {
 				$post = apply_filters( 'keyring_facebook_importer_post', $post );
-				
 				$post_id = wp_insert_post( $post );
 
 				if ( is_wp_error( $post_id ) )
@@ -369,11 +419,15 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 					add_post_meta( $post_id, 'geo_public', 1 );
 				}
 
-				add_post_meta( $post_id, 'raw_import_data', json_encode( $facebook_raw ) );
-
+				// add_post_meta( $post_id, 'raw_import_data', json_encode( $facebook_raw ) );
+				
 				if ( ! empty( $photos ) ) {
 					foreach ( $photos as $photo ) {
-						$this->sideload_media( $photo, $post_id, $post, apply_filters( 'keyring_facebook_importer_image_embed_size', 'full' ) );
+						if($facebook_raw->type == 'link') {
+							$this->sideload_fblink_media( $photo, $post_id, $post, apply_filters( 'keyring_facebook_importer_image_embed_size', 'full' ) );
+						} else {
+							$this->sideload_media( $photo, $post_id, $post, apply_filters( 'keyring_facebook_importer_image_embed_size', 'full' ) );
+						}
 					}
 				}
 
@@ -402,7 +456,48 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 
 	private function rotate_endpoint() {
 		$this->set_option( 'endpoint_index', ( ( $this->get_option( 'endpoint_index', 0 ) + 1 ) % count( $this->api_endpoints ) ) );
-		$this->current_endpoint = $this->api_endpoints[ $this->get_option( 'endpoint_index' ) ];
+		$this->current_endpoint = $this->endpoint_prefix . $this->api_endpoints[ $this->get_option( 'endpoint_index' ) ];
+	}
+
+	/**
+	 * This is a helper for downloading/attaching/inserting media into a post when it's
+	 * being imported. See Flickr/Instagram for examples
+	 */
+	function sideload_fblink_media( $url, $post_id, $post, $size = 'large' ) {
+		if ( !function_exists( 'media_sideload_image' ) )
+			require_once ABSPATH . 'wp-admin/includes/media.php';
+		if ( !function_exists( 'download_url' ) )
+			require_once ABSPATH . 'wp-admin/includes/file.php';
+		if ( !function_exists( 'wp_read_image_metadata' ) )
+			require_once ABSPATH . 'wp-admin/includes/image.php';
+
+		$img = media_sideload_image( urldecode($url), $post_id, $post['post_title'] );
+		if ( is_string( $img ) ) { // returns an image tag
+			// Build a new string using a Large sized image
+			$attachments = get_posts(
+				array(
+					'post_parent' => $post_id,
+					'post_type' => 'attachment',
+					'post_mime_type' => 'image',
+				)
+			);
+
+			if ( $attachments ) { // @todo Only handles a single attachment
+				$data = wp_get_attachment_image_src( $attachments[0]->ID, $size );
+				if ( $data ) {
+					$img = '<img src="' . $data[0] . '" width="' . esc_attr( $data[1] ) . '" height="' . esc_attr( $data[2] ) . '" alt="' . esc_attr( $post['post_title'] ) . '" class="keyring-img" />';
+				}
+			}
+
+			// Regex out the previous img tag, put this one in there instead, or prepend it to the top
+			if ( stristr( $post['post_content'], '<img' ) )
+				$post['post_content'] = preg_replace( '!<img[^>]*>!i', $img, $post['post_content'] );
+			else
+				$post['post_content'] = $img . "\n\n" . $post['post_content'];
+
+			$post['ID'] = $post_id;
+			wp_update_post( $post );
+		}
 	}
 
 	private function sideload_album_photo( $file, $post_id, $desc = '' ) {
@@ -433,6 +528,30 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 		@unlink($file_array['tmp_name']);
 
 		return $id;
+	}
+
+	private function retrieve_pages() {
+		// Get photos
+		$api_url = "https://graph.facebook.com/me/accounts";
+
+		$pages = array();
+
+		$pages_data = $this->service->request( $api_url, array( 'method' => 'GET', 'timeout' => 10 ) );
+		
+		if ( empty( $pages_data ) || empty( $pages_data->data ) ) {
+			return false;
+		}
+
+		foreach ( $pages_data->data as $page_data ) {
+			$page = array();
+			$page['id'] = $page_data->id;
+			$page['name'] = $page_data->name;
+			$page['category'] = $page_data->category;
+
+			$pages[] = $page;
+		}
+
+		return $pages;
 	}
 
 	private function retrieve_album_photos( $album_id, $since = null ) {
@@ -512,5 +631,6 @@ add_action( 'init', function() {
 add_filter( 'keyring_facebook_scope', function ( $scopes ) {
 	$scopes[] = 'read_stream';
 	$scopes[] = 'user_photos';
+	$scopes[] = 'manage_pages';
 	return $scopes;
 } );
