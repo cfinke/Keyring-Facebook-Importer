@@ -4,7 +4,7 @@
 Plugin Name: Keyring Facebook Importer
 Plugin URI: http://www.chrisfinke.com/2013/11/20/export-your-facebook-posts-to-wordpress/
 Description: Imports your data from Facebook.
-Version: 1.0
+Version: 1.0.1
 Author: Christopher Finke
 Author URI: http://www.chrisfinke.com/
 License: GPL2
