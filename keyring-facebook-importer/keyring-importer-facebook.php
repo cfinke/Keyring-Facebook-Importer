@@ -23,7 +23,7 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 	function __construct() {
 		$rv = parent::__construct();
 
-		if ( $this->get_option( 'facebook_page', 0 ) > 0 ) {
+		if ( $this->get_option( 'facebook_page', '' ) ) {
 			$this->endpoint_prefix = $this->get_option( 'facebook_page' );
 		} else {
 			$this->endpoint_prefix = "me";
@@ -100,7 +100,7 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 				'tags'           => explode( ',', $_POST['tags'] ),
 				'author'         => (int) $_POST['author'],
 				'auto_import'    => $_POST['auto_import'],
-				'facebook_page'  => (int) $_POST['facebook_page'],
+				'facebook_page'  => $_POST['facebook_page'],
 				'fb_post_status' => $_POST['fb_post_status']
 			) );
 
