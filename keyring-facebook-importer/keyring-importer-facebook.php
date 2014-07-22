@@ -233,18 +233,9 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 				$photos = array();
 
 				if ( isset( $post->picture ) ) {
-					// The API returns the tiniest thumbnail. Unacceptable.
-					if ( $post->type == 'link' ) {
-						$photos[] = urldecode( preg_replace( '%https://fbexternal-a\.akamaihd\.net/safe_image\.php\?d=[A-Z0-9a-z\-_]+&w=[0-9]+&h=[0-9]+&url=%', '', $post->picture ) );
-					} else {
-						$picture = preg_replace( '/_s\./', '_n.',  $post->picture );
-						$high_res = preg_replace( '/\/s\d\d\dx\d\d\d\//', '/',  $picture );
-						if (stripos(get_headers($high_res)[0], '200') !== false) {
-							$photos[] = $high_res;
-						} else {
-							$photos[] = $picture;
-						}
-					}
+					// The API returns the tiniest thumbnail. Unacceptable
+					$picture_object = $this->service->request('https://graph.facebook.com/' . $post->object_id);
+					$photos[] = $picture_object->source;
 				}
 			}
 
