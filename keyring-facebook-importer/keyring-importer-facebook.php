@@ -233,12 +233,9 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 				$photos = array();
 
 				if ( isset( $post->picture ) ) {
-					// The API returns the tiniest thumbnail. Unacceptable.
-					if ( $post->type == 'link' ) {
-						$photos[] = urldecode( preg_replace( '%https://fbexternal-a\.akamaihd\.net/safe_image\.php\?d=[A-Z0-9a-z\-_]+&w=[0-9]+&h=[0-9]+&url=%', '', $post->picture ) );
-					} else {
-						$photos[] = preg_replace( '/_s\./', '_n.',  $post->picture );
-					}
+					// The API returns the tiniest thumbnail. Unacceptable
+					$picture_object = $this->service->request('https://graph.facebook.com/' . $post->object_id);
+					$photos[] = $picture_object->source;
 				}
 			}
 
@@ -417,7 +414,7 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 				$skipped++;
 			} else {
 				$post = apply_filters( 'keyring_facebook_importer_post', $post );
-				
+
 				$post_id = wp_insert_post( $post );
 
 				if ( is_wp_error( $post_id ) )
@@ -632,7 +629,7 @@ class Keyring_Facebook_Importer extends Keyring_Importer_Base {
 
 	private function sideload_photo_to_album( $photo, $album_id ) {
 		global $wpdb;
-		
+
 		$photo_id = $wpdb->get_var( $wpdb->prepare( "SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = 'facebook_id' AND meta_value = %s", $photo['facebook_id'] ) );
 
 		if ( ! $photo_id ) {
