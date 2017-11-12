@@ -665,7 +665,7 @@ add_action( 'init', function() {
 } );
 
 add_filter( 'keyring_facebook_scope', function ( $scopes ) {
-	$scopes[] = 'read_stream';
+	$scopes[] = 'user_posts';
 	$scopes[] = 'user_photos';
 	$scopes[] = 'manage_pages';
 	return $scopes;
